@@ -88,7 +88,7 @@ Or search directly:
 **Using `uv` (recommended):**
 
 ```bash
-git clone https://github.com/<your-username>/siat-mcp.git
+git clone https://github.com/alishersuyunov/siat-mcp.git
 cd siat-mcp
 uv pip install -e .
 ```
@@ -96,7 +96,7 @@ uv pip install -e .
 **Using `pip`:**
 
 ```bash
-git clone https://github.com/<your-username>/siat-mcp.git
+git clone https://github.com/alishersuyunov/siat-mcp.git
 cd siat-mcp
 pip install -e .
 ```
@@ -115,7 +115,10 @@ Add the following to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "siat-stat-uz": {
-      "command": "siat-mcp"
+      "command": "path_to_python\\python.exe",
+      "args": [
+        "path_to_the_folder\\server.py"
+      ]
     }
   }
 }
@@ -137,6 +140,9 @@ claude mcp add siat-stat-uz -- siat-mcp
 
 Once configured, you can ask your AI assistant things like:
 
+- *"Which sectors have driven the GDP growth in 2025?"*
+- *"Show the wages across sectors in 2025"*
+- *"What was the Gini and construct the Lorenz curve"*
 - *"What statistical categories are available on siat.stat.uz?"*
 - *"Search the Uzbekistan statistics catalog for datasets about inflation."*
 - *"Show me population data for Uzbekistan's regions from 2015 to 2023."*
