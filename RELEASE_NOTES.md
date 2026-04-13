@@ -1,3 +1,29 @@
+# v0.3.0 — NSDP (nsdp.stat.uz) Integration
+
+Added support for Uzbekistan's **National Summary Data Page** — the IMF DSBB-compliant macroeconomic data portal. This brings 22 internationally standardized datasets (GDP, CPI, BOP, exchange rates, government debt, banking sector, and more) from four hosting agencies into the same MCP interface.
+
+**New tools:**
+- **`nsdp_list_datasets`** — Lists all 22 NSDP datasets with their IMF/SDMX codes, names, frequencies, XML URLs, and source domains. No network call required.
+- **`nsdp_get_dataset`** — Fetches and parses an NSDP dataset by its IMF/SDMX code (e.g. `"NAG"`, `"CPI"`, `"EXR"`). Accepts case-insensitive codes. Returns structured time-series data parsed from SDMX 2.1 XML.
+
+**Technical notes:**
+- SDMX 2.1 XML parsed with stdlib `xml.etree.ElementTree` — no new dependencies.
+- A separate `httpx.AsyncClient` is used for NSDP fetches (neutral headers, no siat.stat.uz origin/referer).
+- NSDP datasets are cached with a 6-hour TTL (up to 10 entries) when `cachetools`/`asyncache` are installed.
+- `OBS_VALUE` is coerced to `float`; missing observations are returned as `null`.
+
+---
+
+# v0.2.0 — Performance & Caching Optimization
+
+This update drastically reduces network load and JSON processing time by implementing smart caching and execution upgrades:
+- **Catalog Caching:** The massive catalog JSON tree is now fetched once and dynamically cached in memory (`cachetools`+`asyncache`) with a 1-hour TTL, accelerating searches and category lookups to sub-millisecond ranges.
+- **Dataset Caching:** Up to 5 consecutive datasets are now kept in an LRU memory cache temporarily, saving duplicate multi-megabyte payloads when polling for metadata prior to full table access.
+- **`orjson` Implementation:** Switched base Python HTML/JSON serialization across the board to `orjson` wrapper speeds, speeding up bulk byte streaming.
+- **Connection Transport Pooling:** Configured shared `httpx.AsyncClient` instances to pool Keep-Alive connections instead of repeatedly issuing SSL handshakes.
+
+---
+
 # v0.1.0 — Initial Release
 
 First public release of `siat-mcp`: an MCP server that connects AI assistants to the official statistical database of the National Statistics Committee of Uzbekistan ([siat.stat.uz](https://siat.stat.uz)).

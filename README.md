@@ -2,17 +2,28 @@
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue) ![MCP](https://img.shields.io/badge/MCP-compatible-green)
 
-MCP server for [siat.stat.uz](https://siat.stat.uz) — the official statistical database of the National Statistics Committee of Uzbekistan.
+MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.stat.uz) and [nsdp.stat.uz](https://nsdp.stat.uz).
 
 ## What is this?
 
-`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official national statistics portal via the [Model Context Protocol](https://modelcontextprotocol.io). It exposes 6 tools that let you browse the catalog, search for indicators, and retrieve full historical datasets — population figures, GDP components, trade statistics, social indicators, and more — directly in your AI workflow.
+`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official statistical portals via the [Model Context Protocol](https://modelcontextprotocol.io). It exposes **8 tools** covering two complementary data sources:
 
-Data is served by the National Statistics Committee of Uzbekistan ([stat.uz](https://stat.uz)) and accessed through the public SIAT (Statistical Information and Analysis Tool) API.
+- **siat.stat.uz** — the National Statistics Committee's SIAT portal: a rich catalog of hundreds of datasets covering population, economy, agriculture, labour, and more. Browse by category, search by keyword, and retrieve full historical tables with regional breakdowns.
+- **nsdp.stat.uz** — the National Summary Data Page (IMF DSBB-compliant): 22 internationally standardized macroeconomic indicators (GDP, CPI, exchange rates, BOP, government debt, banking sector, etc.) in SDMX 2.1 XML format.
+
+---
+
+## Features
+
+- **High-Performance Caching:** Implements `asyncache` and `cachetools` to cache the complete catalog schema (1-hour TTL) and recent dataset requests, avoiding redundant multi-megabyte API fetches.
+- **Fast Serialization:** Uses `orjson` (C-optimized JSON parsing) to dramatically speed up the parsing and stringification of heavy statistical tables.
+- **Connection Pooling:** Maintains an active HTTP keep-alive connection pool via a shared `httpx` async client to bypass repeated TLS handshake latency.
 
 ---
 
 ## Available Tools
+
+### siat.stat.uz tools
 
 | Tool | Description |
 |------|-------------|
@@ -23,7 +34,16 @@ Data is served by the National Statistics Committee of Uzbekistan ([stat.uz](htt
 | `get_dataset_metadata` | Preview a dataset's descriptor fields (indicator name, unit, source) without downloading data rows |
 | `get_dataset` | Full dataset: summary, metadata, and year-by-region observation rows |
 
-### Tool details
+### nsdp.stat.uz tools
+
+| Tool | Description |
+|------|-------------|
+| `nsdp_list_datasets` | List all 22 IMF/SDMX datasets with codes, names, frequencies, and XML URLs |
+| `nsdp_get_dataset` | Fetch and parse an NSDP dataset by its IMF/SDMX code (e.g. `"NAG"`, `"CPI"`, `"EXR"`) |
+
+---
+
+### Tool details — siat.stat.uz
 
 #### `list_categories(lang?)`
 Returns the top-level statistical domains (e.g. "Population", "Economy", "Agriculture") with a count of how many sub-items each contains.
@@ -46,6 +66,28 @@ Fetches the complete dataset. Returns three sections:
 - **`metadata`** — all descriptor fields
 - **`data`** — list of observation rows: `code`, `region`, and year-keyed values (`"2020": 1234.5`, `"2021": 1289.0`, ...)
 
+### Tool details — nsdp.stat.uz
+
+#### `nsdp_list_datasets()`
+Returns the full static catalog of 22 NSDP datasets. Each entry includes:
+- `code` — IMF/SDMX identifier (e.g. `"NAG"`, `"BOP"`, `"EXR"`)
+- `name` — human-readable English name
+- `freq` — publication frequency (`"A"`, `"M"`, `"Q"`, or combined like `"A/Q"`)
+- `xml_url` — direct URL to the SDMX 2.1 XML file
+- `source` — hosting domain (`stat.uz`, `cbu.uz`, `api.mf.uz`, `uzse.uz`)
+
+#### `nsdp_get_dataset(indicator_code)`
+Fetches and parses an NSDP dataset. `indicator_code` is case-insensitive. Returns:
+- **`dataset`** — name, code, prepared timestamp, reporting period, freq, xml_url, source domain
+- **`series`** — list of time series, each with:
+  - `indicator` — SDMX INDICATOR code (e.g. `"NGDP_PA_XDC"`)
+  - `freq` — frequency code
+  - `unit_mult` — scale exponent (0 = units, 6 = millions, 9 = billions)
+  - `dimensions` — all SDMX dimension attributes
+  - `observations` — `[{time_period, value}]` (ISO 8601 periods; `value` is `null` when missing)
+
+**Available NSDP codes:** NAG, CPI, GGO, CGO, CGD, DCS, CBS, INR, SPI, BOP, EXD, ILV, MET, IIP, EXR, IND, LMI, PPI, FSI, POP, SDG, DOTS
+
 ---
 
 ## Language Support
@@ -63,22 +105,29 @@ If a name is unavailable in the requested language, the server falls back to Eng
 
 ---
 
-## Typical Workflow
+## Typical Workflows
 
+**Browse siat.stat.uz:**
 ```
-1. list_categories()              → find a domain of interest (e.g. id=5 "Population")
-2. get_category(5)                → see sub-categories inside "Population"
-3. get_category(<sub-id>)         → drill down to leaf datasets
-4. get_dataset_metadata(<id>)     → confirm the indicator name and unit
-5. get_dataset(<id>)              → retrieve the full data table
+1. list_categories()              → find a domain (e.g. id=5 "Population")
+2. get_category(5)                → see sub-categories
+3. get_category(<sub-id>)         → drill to leaf datasets
+4. get_dataset_metadata(<id>)     → confirm indicator name and unit
+5. get_dataset(<id>)              → retrieve full data table
 ```
 
-Or search directly:
-
+**Search siat.stat.uz:**
 ```
-1. search_catalog("GDP")          → find all GDP-related datasets and categories
-2. get_dataset_metadata(<id>)     → preview a promising result
+1. search_catalog("GDP")          → find all GDP-related items
+2. get_dataset_metadata(<id>)     → preview a result
 3. get_dataset(<id>)              → fetch the data
+```
+
+**Use nsdp.stat.uz:**
+```
+1. nsdp_list_datasets()           → see all 22 IMF datasets with codes
+2. nsdp_get_dataset("EXR")        → fetch monthly exchange rates (UZS/USD)
+3. nsdp_get_dataset("NAG")        → fetch GDP national accounts (annual + quarterly)
 ```
 
 ---
@@ -140,17 +189,30 @@ claude mcp add siat-stat-uz -- siat-mcp
 
 Once configured, you can ask your AI assistant things like:
 
-- *"Which sectors have driven the GDP growth in 2025?"*
-- *"Show the wages across sectors in 2025"*
-- *"What was the Gini and construct the Lorenz curve"*
-- *"What statistical categories are available on siat.stat.uz?"*
-- *"Search the Uzbekistan statistics catalog for datasets about inflation."*
-- *"Show me population data for Uzbekistan's regions from 2015 to 2023."*
-- *"What datasets are available under the 'Labour Market' category? Show me the unemployment rate data."*
+**siat.stat.uz:**
+- *"Estimate the Palma ratio over time and plot the Lorenz curve"*
+- *"Which sectors have driven GDP growth in 2025?"*
+- *"Show wages across sectors in 2025"*
+- *"What datasets are available under the 'Labour Market' category?"*
 - *"Get me the metadata for dataset 42 — what does it measure and in what units?"*
+
+**nsdp.stat.uz:**
+- *"Show me Uzbekistan's exchange rate history against the USD"*
+- *"What happened to inflation (CPI) after 2017?"*
+- *"Fetch Balance of Payments data and summarize the current account trend"*
+- *"Get the latest GDP figures and compare annual vs quarterly growth"*
+- *"What is the current level of external debt?"*
 
 ---
 
-## Data Source
+## Data Sources
 
-All data is served by the **National Statistics Committee of the Republic of Uzbekistan** via the public SIAT API at [siat.stat.uz](https://siat.stat.uz). This MCP server does not store, modify, or redistribute data — it fetches from the live API on demand.
+This MCP server does not store, modify, or redistribute data — it fetches from live sources on demand.
+
+| Source | Provider | Format |
+|--------|----------|--------|
+| [siat.stat.uz](https://siat.stat.uz) | National Statistics Committee of Uzbekistan | JSON |
+| [nsdp.stat.uz](https://nsdp.stat.uz) | National Statistics Committee (IMF DSBB) | SDMX 2.1 XML |
+| [cbu.uz](https://cbu.uz) | Central Bank of Uzbekistan | SDMX 2.1 XML |
+| [api.mf.uz](https://mf.uz) | Ministry of Finance of Uzbekistan | SDMX 2.1 XML |
+| [uzse.uz](https://uzse.uz) | Uzbekistan Stock Exchange | SDMX 2.1 XML |
