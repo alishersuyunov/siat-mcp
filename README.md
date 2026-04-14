@@ -2,6 +2,12 @@
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue) ![MCP](https://img.shields.io/badge/MCP-compatible-green)
 
+## Demo
+
+[![Watch the demo](https://img.shields.io/badge/▶_Watch_Demo-blue?style=for-the-badge)](Demo%20-%20siat-MCP.mp4)
+
+---
+
 MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.stat.uz) and [nsdp.stat.uz](https://nsdp.stat.uz).
 
 ## What is this?
