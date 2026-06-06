@@ -220,5 +220,5 @@ This MCP server does not store, modify, or redistribute data — it fetches from
 | [siat.stat.uz](https://siat.stat.uz) | National Statistics Committee of Uzbekistan | JSON |
 | [nsdp.stat.uz](https://nsdp.stat.uz) | National Statistics Committee (IMF DSBB) | SDMX 2.1 XML |
 | [cbu.uz](https://cbu.uz) | Central Bank of Uzbekistan | SDMX 2.1 XML |
-| [api.mf.uz](https://mf.uz) | Ministry of Finance of Uzbekistan | SDMX 2.1 XML |
+| [api.mf.uz](https://mf.uz) | Ministry of Economy and Finance of Uzbekistan | SDMX 2.1 XML |
 | [uzse.uz](https://uzse.uz) | Uzbekistan Stock Exchange | SDMX 2.1 XML |

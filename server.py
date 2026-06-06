@@ -3,12 +3,15 @@ MCP Server for Uzbekistan official statistics.
 
 Sources
 -------
-siat.stat.uz  — National Statistics Committee SIAT portal (JSON API)
-nsdp.stat.uz  — National Summary Data Page, IMF DSBB-compliant (SDMX 2.1 XML)
+siat.stat.uz   — National Statistics Committee SIAT portal (JSON API)
+nsdp.stat.uz   — National Summary Data Page, IMF DSBB-compliant (SDMX 2.1 XML)
+hudud.stat.uz  — Regional statistics portal (GIS indicators + regional passport)
 
 SIAT Catalog API: GET https://siat.stat.uz/api/sdmx/json/
 SIAT Data API:    GET https://siat.stat.uz/media/uploads/sdmx/sdmx_data_{id}.json
 NSDP data:        static SDMX 2.1 XML files hosted on stat.uz, cbu.uz, api.mf.uz, uzse.uz
+hudud GIS API:    GET https://hudud.stat.uz/api/v1/gis/...
+hudud Passport:   GET https://hudud.stat.uz/api/v1/passport/...
 """
 
 import json
@@ -41,6 +44,14 @@ HEADERS = {
     "accept-language": "uz",
     "origin": BASE_URL,
     "referer": f"{BASE_URL}/",
+}
+
+HUDUD_BASE_URL = "https://hudud.stat.uz"
+HUDUD_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "uz",
+    "origin": HUDUD_BASE_URL,
+    "referer": f"{HUDUD_BASE_URL}/",
 }
 
 # ---------------------------------------------------------------------------
@@ -269,6 +280,23 @@ def _get_nsdp_client() -> httpx.AsyncClient:
     return _nsdp_http_client
 
 
+_hudud_http_client: httpx.AsyncClient | None = None
+
+def _get_hudud_client() -> httpx.AsyncClient:
+    global _hudud_http_client
+    if _hudud_http_client is None:
+        _hudud_http_client = httpx.AsyncClient(headers=HUDUD_HEADERS, timeout=60.0)
+    return _hudud_http_client
+
+
+async def _hudud_get(path: str, params: dict | None = None) -> Any:
+    client = _get_hudud_client()
+    url = f"{HUDUD_BASE_URL}{path}"
+    r = await client.get(url, params=params)
+    r.raise_for_status()
+    return orjson.loads(r.content) if _ORJSON else r.json()
+
+
 async def _fetch_catalog() -> list[dict]:
     client = _get_client()
     r = await client.get(CATALOG_URL)
@@ -302,10 +330,20 @@ async def _fetch_nsdp_xml(url: str) -> bytes:
     return r.content
 
 
+async def _hudud_get_cached_regions() -> list:
+    return await _hudud_get("/api/v1/gis/regions/", {"show_children": "true"})
+
+
+async def _hudud_get_cached_spheres() -> list:
+    return await _hudud_get("/api/v1/gis/spheres/")
+
+
 if _CACHE:
     _fetch_catalog = cached(cache=TTLCache(maxsize=1, ttl=3600))(_fetch_catalog)
     _fetch_dataset = cached(cache=LRUCache(maxsize=5))(_fetch_dataset)
     _fetch_nsdp_xml = cached(cache=TTLCache(maxsize=10, ttl=6 * 3600))(_fetch_nsdp_xml)
+    _hudud_get_cached_regions = cached(cache=TTLCache(maxsize=1, ttl=3600))(_hudud_get_cached_regions)
+    _hudud_get_cached_spheres = cached(cache=TTLCache(maxsize=1, ttl=3600))(_hudud_get_cached_spheres)
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +657,515 @@ async def nsdp_get_dataset(indicator_code: str) -> str:
         },
         "series": parsed["series"],
     })
+
+
+# ---------------------------------------------------------------------------
+# hudud.stat.uz — Regional Statistics Portal
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def hudud_list_regions(parent_soato: str = "") -> str:
+    """
+    List administrative regions of Uzbekistan from hudud.stat.uz.
+
+    When called without arguments returns all top-level regions (oblasts +
+    Karakalpakstan Republic) with their immediate children (districts).
+    Pass a parent_soato to get only the sub-regions of that region.
+
+    Args:
+        parent_soato: SOATO code of the parent region, e.g. "1735" for
+                      Karakalpakstan or "1703" for Andijan oblast.
+                      Leave empty to get the full hierarchy.
+
+    Returns:
+        JSON array of region objects. Each has:
+          - "id":             internal numeric id
+          - "soato":          SOATO administrative code (string)
+          - "name":           name in Uzbek Latin
+          - "name_ru":        name in Russian
+          - "children_count": number of child districts
+          - "area_km2":       area in square kilometers (may be null)
+          - "siat_population": latest population estimate (thousand people)
+          - "parent":         parent region object, or null for top-level
+        For top-level call: also includes "childrens" list of child districts.
+    """
+    try:
+        if parent_soato:
+            data = await _hudud_get(
+                "/api/v1/gis/regions/",
+                {"parent__isnull": "false", "parent_soato": parent_soato},
+            )
+        else:
+            data = await _hudud_get_cached_regions()
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_list_spheres() -> str:
+    """
+    List thematic spheres (indicator categories) available in the hudud.stat.uz
+    GIS portal. Each sphere groups a set of regional statistical indicators.
+
+    Returns:
+        JSON array of sphere objects. Each has:
+          - "id":       sphere id (use with hudud_get_sphere_indicators)
+          - "title":    name in Uzbek Latin
+          - "title_en": name in English
+          - "title_ru": name in Russian
+    """
+    try:
+        data = await _hudud_get_cached_spheres()
+        return _dump_json([
+            {
+                "id": s.get("id"),
+                "title": s.get("title"),
+                "title_en": s.get("title_en"),
+                "title_ru": s.get("title_ru"),
+            }
+            for s in data
+        ])
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_sphere_indicators(sphere_id: int) -> str:
+    """
+    List all statistical indicators belonging to a specific thematic sphere
+    in hudud.stat.uz.
+
+    Args:
+        sphere_id: Numeric id of the sphere (from hudud_list_spheres).
+
+    Returns:
+        JSON array of indicator objects. Each has:
+          - "id":          indicator id (use with hudud_get_indicator_data)
+          - "title_en":    indicator name in English
+          - "title_uz":    indicator name in Uzbek Latin
+          - "title_ru":    indicator name in Russian
+          - "code":        internal indicator code
+          - "sdmx_id":     linked SDMX dataset id (usable with get_dataset)
+          - "period_en":   periodicity ("annual", "quarterly", "monthly")
+          - "unit_en":     unit of measurement in English
+    """
+    try:
+        data = await _hudud_get("/api/v1/gis/spheres/sdmx/", {"menu": sphere_id})
+        return _dump_json([
+            {
+                "id": ind.get("id"),
+                "title_en": ind.get("title_en"),
+                "title_uz": ind.get("title_uz") or ind.get("title"),
+                "title_ru": ind.get("title_ru"),
+                "code": ind.get("code"),
+                "sdmx_id": ind.get("sdmx_id"),
+                "period_en": ind.get("period_en"),
+                "unit_en": ind.get("unit_en"),
+            }
+            for ind in data
+        ])
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_indicator_periods(indicator_id: int) -> str:
+    """
+    Get the list of available time periods for a specific GIS indicator on
+    hudud.stat.uz.
+
+    Args:
+        indicator_id: Numeric indicator id (from hudud_get_sphere_indicators).
+
+    Returns:
+        JSON object with:
+          - "id":         indicator id
+          - "title":      indicator name
+          - "period_en":  periodicity label
+          - "periods":    list of {year, period} dicts.
+                          For annual data, period is null; for monthly it is
+                          "M01"–"M12"; for quarterly "Q1"–"Q4".
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/gis/sdmx/{indicator_id}/periods/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_indicator_data(
+    indicator_id: int,
+    soato: str = "",
+    period: str = "",
+) -> str:
+    """
+    Retrieve regional values for a GIS indicator from hudud.stat.uz.
+
+    Args:
+        indicator_id: Numeric indicator id (from hudud_get_sphere_indicators).
+        soato:        SOATO code to filter by a specific region, e.g. "1735".
+                      Leave empty to get data for all regions.
+        period:       Period string, e.g. "2024", "2024-Q3", "2024-M06".
+                      Leave empty to use the latest available period.
+
+    Returns:
+        JSON object with indicator metadata and a "data" section containing:
+          - "min_value" / "max_value": range across regions
+          - "period":   the period returned ("last" = latest available)
+          - "soato":    the parent SOATO scope
+          - "values":   list of regional observations, each with soato, value,
+                        last_period, previous_value, growth_percentage.
+    """
+    try:
+        data = await _hudud_get(
+            f"/api/v1/gis/sdmx/{indicator_id}/",
+            {"soato": soato, "period": period},
+        )
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_indicator_metadata(indicator_id: int) -> str:
+    """
+    Get detailed metadata for a GIS indicator from hudud.stat.uz, including
+    publication dates, source department, and all multilingual descriptors.
+
+    Args:
+        indicator_id: Numeric indicator id (from hudud_get_sphere_indicators).
+
+    Returns:
+        JSON object with indicator id, linked sdmx_id, and a "metadata" list
+        of {name_en, name_ru, name_uz, value_en, value_ru, value_uz} entries
+        describing the indicator's methodology, units, and publication history.
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/gis/sdmx-info/{indicator_id}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_region_passport(soato: str = "") -> str:
+    """
+    Get the macro-economic and demographic summary card ("passport") for an
+    administrative region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the region, e.g. "1735" for Karakalpakstan,
+               "1703" for Andijan oblast. Leave empty for the national level.
+
+    Returns:
+        JSON object with a "MacroAndDemography" section containing four key
+        indicator cards (population, economically active population, industrial
+        output, foreign trade turnover). Each card has title, unit, periodicity,
+        period, current value, and year-on-year growth percentage.
+    """
+    try:
+        params = {"code": soato} if soato else {}
+        data = await _hudud_get("/api/v1/passport/MacroEconomicAndDemographicIndicators/", params)
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_population_by_years(soato: str) -> str:
+    """
+    Get historical population data (2010–present) for each sub-region of
+    the specified region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of a region, e.g. "1700" (national), "1735"
+               (Karakalpakstan), "1703" (Andijan). District codes also work.
+
+    Returns:
+        JSON object with "soato", "region" name, and "data" — a dict keyed
+        by sub-region SOATO codes. Each sub-region entry contains its
+        classifier labels (Uzbek, Russian, English, Cyrillic) and year-keyed
+        population values in thousands.
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/DemographyPopulationByYears/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_population_by_gender_age(soato: str) -> str:
+    """
+    Get population breakdown by gender and age groups for a region from
+    hudud.stat.uz (population pyramid data).
+
+    Args:
+        soato: SOATO code of the region, e.g. "1700" (national) or "1735".
+
+    Returns:
+        JSON object with:
+          - "soato":       region code
+          - "period":      reference year
+          - "periodicity": frequency label (Uzbek)
+          - "unit":        unit of measurement (e.g. "kishi" = persons)
+          - "AGES":        list of age group labels (e.g. ["0-2", "3-5", ...])
+          - "boysData":    population counts per age group for males
+          - "girlsData":   population counts per age group for females
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/PopularityGenderAges/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_population_by_gender_subregion(soato: str) -> str:
+    """
+    Get male/female population split across all sub-regions of a region from
+    hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the parent region, e.g. "1700" or "1735".
+
+    Returns:
+        JSON object with:
+          - "soato":       parent region code
+          - "period":      reference period
+          - "unit":        unit (e.g. "ming kishi" = thousand persons)
+          - "region_list": list of sub-region SOATO codes
+          - "male_list":   male population for each sub-region (same order)
+          - "female_list": female population for each sub-region (same order)
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/PopularityGenderBySoato/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_urban_rural_population(soato: str) -> str:
+    """
+    Get urban vs. rural population split for a region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the region, e.g. "1735".
+
+    Returns:
+        JSON object with "soato", "period", "unit", "cityData" (urban
+        population), and "villageData" (rural population).
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/PopulationVillageAndCityBySoato/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_demography_indicators(soato: str) -> str:
+    """
+    Get quarterly demographic indicator time-series (births, deaths, etc.)
+    for a region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the region, e.g. "1735".
+
+    Returns:
+        JSON object with available periods and a list of demographic indicator
+        series. Each series has sdmx_id, multilingual title, unit, and
+        "periods_data" — list of {year, period, value, growth_percentage}.
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/demography/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_import_export(soato: str) -> str:
+    """
+    Get monthly import and export trade data for a region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the region, e.g. "1735".
+
+    Returns:
+        JSON object with "soato", "period" (latest month), "unit" (currency),
+        "Periods" (list of month codes like "2025-M04"), "Import" and "Export"
+        (lists of cumulative values, same order as Periods).
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/import-export/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_salary_by_subregion(soato: str) -> str:
+    """
+    Get average wage data for all sub-regions of a region from hudud.stat.uz.
+
+    Args:
+        soato: SOATO code of the parent region, e.g. "1735".
+
+    Returns:
+        JSON object with "soato", "period", "unit", and "data" — list of
+        {soato, value} pairs giving the average monthly wage per sub-region.
+    """
+    try:
+        data = await _hudud_get(f"/api/v1/passport/SalaryBySoato/{soato}/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_salary_by_activity(activity_codes: str) -> str:
+    """
+    Get quarterly average wage time-series broken down by economic activity
+    type (NACE codes) from hudud.stat.uz.
+
+    Args:
+        activity_codes: Comma-separated NACE section codes, e.g. "A,B,C".
+                        Call hudud_list_activity_types to see all valid codes.
+
+    Returns:
+        JSON object with "codes", "period", and "data" — list of activity
+        entries, each with classifier labels and a "data" list of
+        {year, period, value} quarterly wage observations.
+    """
+    try:
+        data = await _hudud_get(
+            "/api/v1/passport/SalaryByActivityTypes/",
+            {"codes": activity_codes},
+        )
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_list_activity_types() -> str:
+    """
+    List all economic activity types (NACE sections) used in hudud.stat.uz.
+    The codes returned can be used with hudud_get_salary_by_activity and
+    hudud_get_org_count_by_activity.
+
+    Returns:
+        JSON array of activity type objects. Each has:
+          - "code":    NACE section letter (e.g. "A", "B", "C")
+          - "name":    name in Uzbek Latin
+          - "name_ru": name in Russian
+          - "name_en": name in English
+    """
+    try:
+        data = await _hudud_get("/api/v1/passport/ActivityTypesList/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_org_count_by_activity() -> str:
+    """
+    Get the current count of registered organisations by economic activity
+    type (NACE section) in Uzbekistan from hudud.stat.uz.
+
+    Returns:
+        JSON object with "period" (reference month, e.g. "2026-M04") and
+        "results" — list of {code, name, name_ru, value, percentage} entries,
+        where value is the total number of organisations and percentage is
+        the year-on-year growth rate.
+    """
+    try:
+        data = await _hudud_get("/api/v1/passport/OrgCountByActivityTypes/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_geometries() -> str:
+    """
+    Get GeoJSON feature geometries for all administrative regions of
+    Uzbekistan from hudud.stat.uz. Suitable for interactive mapping.
+
+    Returns:
+        GeoJSON FeatureCollection where each feature represents an
+        administrative region with:
+          - "id":       SOATO code (string)
+          - "geometry": MultiPolygon with lat/long coordinates
+                        (WGS84, suitable for Leaflet/Mapbox)
+          - "properties": currently empty in the raw API response
+    """
+    try:
+        data = await _hudud_get("/api/v1/gis/geometries/")
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_sdmx_by_period_type(period_type: str = "annual") -> str:
+    """
+    Get a list of SDMX indicator metadata filtered by periodicity type from
+    hudud.stat.uz. Useful for discovering which indicators are available at
+    specific frequencies (annual, quarterly, monthly).
+
+    Args:
+        period_type: Periodicity filter — "annual", "quarterly", or "monthly".
+                     Defaults to "annual".
+
+    Returns:
+        JSON object with "period_type" and "sdmx_list" — array of indicators
+        with id, title (multilingual), unit, sdmx_id, and associated color
+        coding for UI display.
+    """
+    try:
+        data = await _hudud_get(
+            "/api/v1/passport/FilterSDMXListByPeriodType/",
+            {"period_type": period_type},
+        )
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def hudud_get_timeline_by_period(
+    period_type: str = "annual",
+    period: str = "",
+) -> str:
+    """
+    Get a timeline of key economic indicators for a specific time period from
+    hudud.stat.uz. Returns top trending indicators with their recent values
+    and historical series.
+
+    Args:
+        period_type: "annual", "quarterly", or "monthly". Defaults to "annual".
+        period:      Specific period, e.g. "2026", "2026-Q1", "2026-M03".
+                     Leave empty for latest available.
+
+    Returns:
+        JSON object with "period_type", "period", and "timeline_data" — list
+        of trending indicators, each with title (multilingual), unit, and a
+        "timeline" list of {year, period, value} observations.
+    """
+    try:
+        params = {"period_type": period_type}
+        if period:
+            params["period"] = period
+        data = await _hudud_get("/api/v1/passport/TimelineByPeriodAndPeriodType/", params)
+        return _dump_json(data)
+    except Exception as e:
+        return _dump_json({"error": str(e)})
 
 
 if __name__ == "__main__":
