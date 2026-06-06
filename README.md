@@ -8,14 +8,15 @@
 
 ---
 
-MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.stat.uz) and [nsdp.stat.uz](https://nsdp.stat.uz).
+MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.stat.uz), [nsdp.stat.uz](https://nsdp.stat.uz), and [hudud.stat.uz](https://hudud.stat.uz).
 
 ## What is this?
 
-`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official statistical portals via the [Model Context Protocol](https://modelcontextprotocol.io). It exposes **8 tools** covering two complementary data sources:
+`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official statistical portals via the [Model Context Protocol](https://modelcontextprotocol.io). It exposes **30 tools** covering three complementary data sources:
 
-- **siat.stat.uz** — the National Statistics Committee's SIAT portal: a rich catalog of hundreds of datasets covering population, economy, agriculture, labour, and more. Browse by category, search by keyword, and retrieve full historical tables with regional breakdowns.
-- **nsdp.stat.uz** — the National Summary Data Page (IMF DSBB-compliant): 22 internationally standardized macroeconomic indicators (GDP, CPI, exchange rates, BOP, government debt, banking sector, etc.) in SDMX 2.1 XML format.
+- **siat.stat.uz** — National Statistics Committee's SIAT portal: hundreds of datasets covering population, economy, agriculture, labour, and more. Browse by category, search by keyword (with server-side search and pagination support), and retrieve full historical tables with regional breakdowns.
+- **nsdp.stat.uz** — National Summary Data Page (IMF DSBB-compliant): 22 internationally standardized macroeconomic indicators (GDP, CPI, exchange rates, BOP, government debt, banking sector, etc.) in SDMX 2.1 XML format.
+- **hudud.stat.uz** — Regional statistics portal with GIS integration: administrative regions, thematic indicators (50+ sectors), regional summaries, demographics (population pyramids, urban/rural split), trade data, and economic activity statistics by region.
 
 ---
 
@@ -36,7 +37,9 @@ MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.st
 | `list_categories` | List top-level catalog categories with child counts |
 | `get_category` | Expand a category to see its sub-categories or datasets |
 | `search_catalog` | Full-tree keyword search — returns hierarchy path for each match |
+| `search_catalog_server_side` | Server-side search with pagination (efficient for large result sets) |
 | `list_datasets` | Flat list of every leaf dataset across the entire catalog |
+| `list_datasets_paginated` | Paginated flat list of leaf datasets (memory-efficient for bulk operations) |
 | `get_dataset_metadata` | Preview a dataset's descriptor fields (indicator name, unit, source) without downloading data rows |
 | `get_dataset` | Full dataset: summary, metadata, and year-by-region observation rows |
 
@@ -46,6 +49,31 @@ MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.st
 |------|-------------|
 | `nsdp_list_datasets` | List all 22 IMF/SDMX datasets with codes, names, frequencies, and XML URLs |
 | `nsdp_get_dataset` | Fetch and parse an NSDP dataset by its IMF/SDMX code (e.g. `"NAG"`, `"CPI"`, `"EXR"`) |
+
+### hudud.stat.uz tools
+
+| Tool | Description |
+|------|-------------|
+| `hudud_list_regions` | Administrative regions (oblasts, districts) with SOATO codes, population, area |
+| `hudud_list_spheres` | Thematic indicator categories (50+ economic, social, demographic sectors) |
+| `hudud_get_sphere_indicators` | Indicators within a thematic sphere |
+| `hudud_get_indicator_periods` | Available time periods for an indicator |
+| `hudud_get_indicator_data` | Regional values for any GIS indicator by SOATO and period |
+| `hudud_get_indicator_metadata` | Full methodology and publication history |
+| `hudud_get_region_passport` | Macro-economic and demographic summary card for a region |
+| `hudud_get_population_by_years` | Historical population (2010–present) by sub-region |
+| `hudud_get_population_by_gender_age` | Population pyramid (age groups × gender) |
+| `hudud_get_population_by_gender_subregion` | Male/female totals per district |
+| `hudud_get_urban_rural_population` | Urban vs. rural population split |
+| `hudud_get_demography_indicators` | Quarterly vital statistics (births, deaths, etc.) |
+| `hudud_get_import_export` | Monthly cumulative import/export trade data |
+| `hudud_get_salary_by_subregion` | Average wage per district |
+| `hudud_get_salary_by_activity` | Quarterly wages by NACE sector |
+| `hudud_list_activity_types` | NACE economic activity codes and labels |
+| `hudud_get_org_count_by_activity` | Registered firm counts by economic sector |
+| `hudud_get_geometries` | GeoJSON feature geometries for interactive mapping |
+| `hudud_get_sdmx_by_period_type` | Filter indicators by frequency (annual/quarterly/monthly) |
+| `hudud_get_timeline_by_period` | Trending economic indicators with recent history |
 
 ---
 

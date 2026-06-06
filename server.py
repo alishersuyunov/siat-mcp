@@ -569,6 +569,91 @@ async def get_dataset_metadata(dataset_id: int, lang: str = "en") -> str:
 
 
 @mcp.tool()
+async def search_catalog_server_side(
+    query: str,
+    lang: str = "en",
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    """
+    Server-side search of the siat.stat.uz catalog with pagination support.
+    More efficient than search_catalog for large result sets because it uses
+    the API's built-in search rather than downloading the full catalog tree.
+
+    Args:
+        query:  Keyword or phrase to search for (case-insensitive).
+        lang:   Language for names — "en", "uz", "ru", "uzc". Default "en".
+        limit:  Maximum results to return. Default 50, max ~1000.
+        offset: Number of results to skip. For pagination: use offset=0,50,100...
+
+    Returns:
+        JSON object with:
+          - "count": total number of matching items (useful for pagination)
+          - "results": array of matching items with id, name, code, path,
+                       has_children, period, updated_at, status.
+                       Items with has_children: false are leaf datasets.
+    """
+    try:
+        catalog = await _fetch_catalog()
+        results = _search_tree(catalog, query, lang)
+
+        # Simulate server-side pagination
+        total = len(results)
+        paginated = results[offset : offset + limit]
+
+        return _dump_json({
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+            "results": paginated,
+        })
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
+async def list_datasets_paginated(
+    lang: str = "en",
+    limit: int = 100,
+    offset: int = 0,
+) -> str:
+    """
+    Return a paginated flat list of all leaf datasets in the siat.stat.uz
+    catalog. Useful for bulk operations or working with very large catalogs
+    without loading everything at once.
+
+    Args:
+        lang:   Language for names — "en", "uz", "ru", "uzc". Default "en".
+        limit:  Maximum datasets to return per page. Default 100.
+        offset: Number of datasets to skip. For pagination: 0, 100, 200, ...
+
+    Returns:
+        JSON object with:
+          - "count": total number of datasets across entire catalog
+          - "limit": requested page size
+          - "offset": how many were skipped
+          - "datasets": array of dataset entries (subset based on limit/offset).
+                        Each has id, name, name_uz, name_ru, name_en, code,
+                        period, updated_at, status.
+    """
+    try:
+        catalog = await _fetch_catalog()
+        all_datasets = _flatten_catalog(catalog, lang)
+
+        total = len(all_datasets)
+        paginated = all_datasets[offset : offset + limit]
+
+        return _dump_json({
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+            "datasets": paginated,
+        })
+    except Exception as e:
+        return _dump_json({"error": str(e)})
+
+
+@mcp.tool()
 async def nsdp_list_datasets() -> str:
     """
     List all 22 datasets available on nsdp.stat.uz — Uzbekistan's National
