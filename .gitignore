@@ -21,6 +21,7 @@ ENV/
 
 # uv
 .uv/
+.lock
 
 # Distribution / packaging
 .Python
