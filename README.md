@@ -12,7 +12,7 @@ MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.st
 
 ## What is this?
 
-`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official statistical portals via the [Model Context Protocol](https://modelcontextprotocol.io). Its default interface exposes **three tools**, including one SIAT tool that searches and retrieves data in a single request:
+`siat-mcp` connects AI assistants (Claude, Cursor, etc.) to Uzbekistan's official statistical portals via the [Model Context Protocol](https://modelcontextprotocol.io). The marketplace and desktop plugin packages expose **13 read-only tools**, including one SIAT tool that searches and retrieves data in a single request:
 
 - **siat.stat.uz** — National Statistics Committee's SIAT portal: hundreds of datasets covering population, economy, agriculture, labour, and more. Browse by category, search by keyword, and retrieve full historical tables with regional breakdowns.
 - **nsdp.stat.uz** — National Summary Data Page (IMF DSBB-compliant): 22 internationally standardized macroeconomic indicators (GDP, CPI, exchange rates, BOP, government debt, banking sector, etc.) in SDMX 2.1 XML format.
@@ -43,9 +43,9 @@ MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.st
 | `nsdp_list_datasets` | List all 22 IMF/SDMX datasets with codes, names, frequencies, and XML URLs |
 | `nsdp_get_dataset` | Fetch and parse an NSDP dataset by its IMF/SDMX code (e.g. `"NAG"`, `"CPI"`, `"EXR"`) |
 
-### Detailed SIAT tools (opt in)
+### Detailed SIAT tools (enabled in plugin packages)
 
-Set `SIAT_MCP_LEGACY_TOOLS=1` in the MCP server's environment to expose these tools alongside the default three. They support catalog inspection, raw tables, bulk downloads, and compatibility with existing clients.
+Plugin packages enable these ten additional tools automatically. A standalone server still starts with three tools; set `SIAT_MCP_LEGACY_TOOLS=1` in its environment to expose all 13. They support catalog inspection, raw tables, bulk downloads, and compatibility with existing clients.
 
 | Tool | Description |
 |------|-------------|
@@ -76,7 +76,7 @@ siat_query(request="1.01.01.0001", period="all", start_year=2020)
 
 `request` accepts a natural-language indicator description, exact catalog code, or numeric dataset ID. By default the response returns the latest period and at most 15 classifier rows. A year in the request selects that year; phrases such as "trend" or "since 2020" select a bounded time series. Use `classifier` for a territory, sector, or classifier code. Use `period="all"`, `start_year`, `end_year`, `max_rows`, and `max_periods` for explicit control. If the name matches several indicators, the tool returns up to five named choices with IDs; call it once more with the selected ID. The response reports when rows or periods were truncated and links to the source file.
 
-### Detailed SIAT tool reference (opt in)
+### Detailed SIAT tool reference
 
 #### `list_categories(lang?)`
 Returns the top-level statistical domains (e.g. "Population", "Economy", "Agriculture") with a count of how many sub-items each contains.
@@ -414,7 +414,7 @@ claude mcp add siat-stat-uz -- "/absolute/path/to/.venv/bin/python" "/absolute/p
 
 On Windows, use the full path to `.venv/Scripts/python.exe` for the first path. Keep quotation marks around paths containing spaces.
 
-**Need the detailed SIAT tools?** The default setup exposes three tools. Advanced users can set `SIAT_MCP_LEGACY_TOOLS=1` in the server's environment to expose the additional tools listed earlier in this README.
+**Plugin packages expose all 13 tools automatically.** Manual standalone setups retain the three-tool interface unless you add `"env": {"SIAT_MCP_LEGACY_TOOLS": "1"}` to the server entry. The plugin still shows one connector: all 13 tools belong to that connection.
 
 ---
 

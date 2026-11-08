@@ -71,3 +71,11 @@ References:
 - [Claude desktop bundles](https://www.anthropic.com/research/desktop-extensions)
 - [OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins)
 - [OpenAI local submission eligibility](https://developers.openai.com/plugins/deploy/desktop-only)
+
+## Expanded tools (0.3.1)
+
+All plugin launch configurations enable `SIAT_MCP_LEGACY_TOOLS=1`. This exposes
+13 read-only tools through one connector, including catalog browsing, metadata,
+filtered tables, bulk retrieval (up to 20 datasets), and NSDP. Standalone launches
+retain three tools unless that environment variable is set. Update/reinstall the
+plugin and start a new chat to refresh cached tool discovery.

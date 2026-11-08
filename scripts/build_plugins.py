@@ -19,6 +19,8 @@ def build(native=None):
     with zipfile.ZipFile(source, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in files:
             archive.write(ROOT / name, name)
+        for path in (ROOT / 'skills').rglob('*.md'):
+            archive.write(path, path.relative_to(ROOT).as_posix())
         for path in (ROOT / 'docs').glob('*.md'):
             archive.write(path, path.relative_to(ROOT).as_posix())
     print(source)
@@ -36,7 +38,7 @@ def build(native=None):
         'author': metadata['author'], 'license': metadata['license'],
         'homepage': metadata['homepage'], 'support': metadata['homepage'] + '/issues',
         'server': {'type': 'binary', 'entry_point': 'server/' + exe,
-                   'mcp_config': {'command': '${__dirname}/server/' + exe, 'args': []}},
+                   'mcp_config': {'command': '${__dirname}/server/' + exe, 'args': [], 'env': {'SIAT_MCP_LEGACY_TOOLS': '1'}}},
         'compatibility': {'platforms': [system]}, 'tools_generated': True,
     }
     def write_json(archive, name, obj):
@@ -45,6 +47,9 @@ def build(native=None):
         path = output / f'siat-mcp-{version}-{suffix}.{kind}'
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as archive:
             archive.write(ROOT / 'LICENSE', 'LICENSE')
+            if kind != 'mcpb':
+                for skill in (ROOT / 'skills').rglob('*.md'):
+                    archive.write(skill, skill.relative_to(ROOT).as_posix())
             if kind == 'mcpb':
                 write_json(archive, 'manifest.json', manifest)
             else:
@@ -52,11 +57,11 @@ def build(native=None):
                 write_json(archive, 'mcp.json', {
                     '$schema': 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
                     'mcpServers': {'siat-stat-uz': {'type': 'stdio',
-                        'command': '${PLUGIN_ROOT}/server/' + exe, 'args': []}}})
+                        'command': '${PLUGIN_ROOT}/server/' + exe, 'args': [], 'env': {'SIAT_MCP_LEGACY_TOOLS': '1'}}}})
                 claude = json.loads((ROOT / '.claude-plugin/plugin.json').read_text())
                 write_json(archive, '.claude-plugin/plugin.json', claude)
                 write_json(archive, '.mcp.json', {'mcpServers': {'siat-stat-uz': {
-                    'command': '${CLAUDE_PLUGIN_ROOT}/server/' + exe, 'args': []}}})
+                    'command': '${CLAUDE_PLUGIN_ROOT}/server/' + exe, 'args': [], 'env': {'SIAT_MCP_LEGACY_TOOLS': '1'}}}})
             for item in sorted(native.rglob('*')):
                 if item.is_symlink():
                     raise ValueError(f'Symlink requires explicit packaging support: {item}')

@@ -12,7 +12,10 @@
         "--from",
         "${PLUGIN_ROOT}",
         "siat-mcp"
-      ]
+      ],
+      "env": {
+        "SIAT_MCP_LEGACY_TOOLS": "1"
+      }
     }
   }
 }

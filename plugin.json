@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "siat-mcp",
-  "version": "0.3.0",
-  "description": "Search and retrieve public Uzbekistan statistics from SIAT and NSDP.",
+  "version": "0.3.1",
+  "description": "13 read-only tools for Uzbekistan statistics: search and browse SIAT, inspect metadata, retrieve tables and multiple datasets, and explore NSDP indicators.",
   "author": {
     "name": "Alisher Suyunov"
   },

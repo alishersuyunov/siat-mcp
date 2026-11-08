@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "siat-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server for Uzbekistan official statistics — siat.stat.uz and nsdp.stat.uz"
 readme = "README.md"
 license = {file = "LICENSE"}
