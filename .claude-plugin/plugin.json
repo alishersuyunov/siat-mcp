@@ -1,0 +1,11 @@
+{
+  "name": "siat-mcp",
+  "version": "0.3.0",
+  "description": "Search and retrieve public Uzbekistan statistics from SIAT and NSDP.",
+  "author": {
+    "name": "Alisher Suyunov"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/alishersuyunov/siat-mcp",
+  "repository": "https://github.com/alishersuyunov/siat-mcp"
+}

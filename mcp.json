@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "siat-stat-uz": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "tool",
+        "run",
+        "--python",
+        "3.11",
+        "--from",
+        "${PLUGIN_ROOT}",
+        "siat-mcp"
+      ]
+    }
+  }
+}

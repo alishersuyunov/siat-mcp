@@ -1,0 +1,19 @@
+{
+  "name": "siat-statistics",
+  "owner": {
+    "name": "Alisher Suyunov"
+  },
+  "plugins": [
+    {
+      "name": "siat-mcp",
+      "source": "./",
+      "description": "Search and retrieve public Uzbekistan statistics from SIAT and NSDP.",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Data & Analytics"
+    }
+  ],
+  "description": "Local tools for public Uzbekistan statistics; no hosted MCP service."
+}

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "siat-stat-uz": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "tool",
+        "run",
+        "--python",
+        "3.11",
+        "--from",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "siat-mcp"
+      ]
+    }
+  }
+}

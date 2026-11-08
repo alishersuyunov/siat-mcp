@@ -1,4 +1,4 @@
-﻿"""
+"""
 MCP Server for Uzbekistan official statistics.
 
 Sources
@@ -10,8 +10,11 @@ SIAT Data API:    GET https://siat.stat.uz/media/uploads/sdmx/sdmx_data_{id}.jso
 NSDP data:        static SDMX 2.1 XML files hosted on stat.uz, cbu.uz, api.mf.uz, uzse.uz
 """
 
+import argparse
 import asyncio
 import json
+import math
+from contextlib import asynccontextmanager
 import os
 import re
 import threading
@@ -21,6 +24,8 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 
 try:
     import orjson
@@ -76,12 +81,31 @@ NSDP_CATALOG: dict[str, dict] = {
     "DOTS": {"name": "Direction of Trade Statistics",     "xml_url": "https://stat.uz/img/uploads/download_xml/dots_uzbekistan_sta.xml",                   "freq": "A/Q"},
 }
 
-mcp = FastMCP("siat-stat-uz", dependencies=["httpx"])
+@asynccontextmanager
+async def _lifespan(app):
+    """Release pooled connections when either MCP transport shuts down."""
+    try:
+        yield {}
+    finally:
+        clients = list(_clients.values())
+        _clients.clear()
+        await asyncio.gather(*(client.aclose() for client in clients))
+
+
+READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True,
+)
+mcp = FastMCP(
+    "siat-stat-uz", dependencies=["httpx"], stateless_http=True, json_response=True,
+    lifespan=_lifespan,
+    instructions="Query public Uzbekistan statistics. Preserve units, periods, source links, "
+    "and truncation notices. Use siat_query for SIAT and nsdp_list_datasets to discover NSDP codes.",
+)
 
 
 def _legacy_tool():
     """Keep detailed tools available without crowding the default MCP menu."""
-    return mcp.tool() if os.environ.get("SIAT_MCP_LEGACY_TOOLS") == "1" else lambda func: func
+    return mcp.tool(annotations=READ_ONLY) if os.environ.get("SIAT_MCP_LEGACY_TOOLS") == "1" else lambda func: func
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +294,10 @@ def _catalog_matches(catalog: list[dict], query: str, lang: str, limit: int) -> 
     return matches[:limit]
 
 
+def _find_code_request(request: str) -> bool:
+    return bool(re.fullmatch(r"\d+(?:\.\d+)+", request))
+
+
 def _public_match(match: dict) -> dict:
     return {key: value for key, value in match.items() if key != "_score"}
 
@@ -322,17 +350,12 @@ def _format_dataset(
         key=_period_sort_key,
     )
     years = sorted({int(k[:4]) for k in period_keys})
-    indicator = next(
-        (m["value"] for m in metadata if (m.get("name") or "").lower() == "indicator name"),
-        None,
-    ) or next(
-        (m["value"] for m in metadata if "indicator name" in (m.get("name") or "").lower()),
-        None,
-    )
-    unit = next(
-        (m["value"] for m in metadata if "unit" in (m.get("name") or "").lower()),
-        None,
-    )
+    def metadata_value(term):
+        return next((localized["value"] for source, localized in zip(metadata_raw, metadata)
+                     if term in (source.get("name_en") or source.get("key_name") or "").casefold()), None)
+
+    indicator = metadata_value("indicator name") or metadata_value("data set name")
+    unit = metadata_value("unit")
     summary = {
         "id": dataset_id,
         "indicator": indicator,
@@ -359,6 +382,8 @@ def _parse_sdmx_xml(content: bytes) -> dict:
     except ET.ParseError as exc:
         raise ValueError(f"SDMX XML parse error: {exc}") from exc
 
+    if not any(_local(child.tag) == "DataSet" for child in root):
+        raise ValueError("Expected an SDMX DataSet, received another XML document")
     prepared = ""
     reporting_period = ""
     for child in root:
@@ -394,6 +419,8 @@ def _parse_sdmx_xml(content: bytes) -> dict:
                     try:
                         value: float | None = float(raw_val) if raw_val is not None else None
                     except (ValueError, TypeError):
+                        value = None
+                    if value is not None and not math.isfinite(value):
                         value = None
                     observations.append({
                         "time_period": obs.attrib.get("TIME_PERIOD", ""),
@@ -436,7 +463,7 @@ def _make_client(base_url: str, *, xml: bool = False) -> httpx.AsyncClient:
 _clients: dict[str, httpx.AsyncClient] = {}
 
 def _client(key: str, base_url: str = "", *, xml: bool = False) -> httpx.AsyncClient:
-    if key not in _clients:
+    if key not in _clients or _clients[key].is_closed:
         _clients[key] = _make_client(base_url or key, xml=xml)
     return _clients[key]
 
@@ -455,7 +482,10 @@ def _parse_json(r: httpx.Response) -> Any:
 async def _fetch_catalog() -> list[dict]:
     r = await _client("siat", SIAT_BASE).get(f"{SIAT_BASE}/api/sdmx/json/")
     r.raise_for_status()
-    return _parse_json(r)
+    raw = _parse_json(r)
+    if not isinstance(raw, list) or any(not isinstance(node, dict) for node in raw):
+        raise ValueError("Unexpected catalog format")
+    return raw
 
 
 async def _fetch_dataset(dataset_id: int) -> dict:
@@ -467,6 +497,9 @@ async def _fetch_dataset(dataset_id: int) -> dict:
         raw = raw[0]
     if not isinstance(raw, dict) or "metadata" not in raw or "data" not in raw:
         raise ValueError(f"Unexpected dataset format: {str(raw)[:200]}")
+    if any(not isinstance(raw[key], list) or
+           any(not isinstance(item, dict) for item in raw[key]) for key in ("metadata", "data")):
+        raise ValueError("Dataset metadata and data must be arrays of objects")
     return raw
 
 
@@ -510,24 +543,6 @@ async def _fetch_nsdp_xml(url: str) -> bytes:
     return r.content
 
 
-# async def _hudud_get(path: str, params: dict | None = None) -> Any:
-#     r = await _client("hudud", HUDUD_BASE).get(f"{HUDUD_BASE}{path}", params=params)
-#     r.raise_for_status()
-#     return _parse_json(r)
-#
-#
-# async def _hudud_regions() -> list:
-#     return await _hudud_get("/api/v1/gis/regions/", {"show_children": "true"})
-#
-#
-# async def _hudud_spheres() -> list:
-#     return await _hudud_get("/api/v1/gis/spheres/")
-#
-#
-# async def _hudud_activity_types() -> list:
-#     return await _hudud_get("/api/v1/passport/ActivityTypesList/")
-
-
 if _CACHE:
     _fetch_catalog = cached(cache=TTLCache(maxsize=1, ttl=3600))(_fetch_catalog)
     _fetch_dataset = cached(cache=TTLCache(maxsize=32, ttl=3600))(_fetch_dataset)
@@ -536,16 +551,13 @@ if _CACHE:
     _fetch_dataset_table = cached(cache=TTLCache(maxsize=16, ttl=3600))(_fetch_dataset_table)
     _fetch_portal_counters = cached(cache=TTLCache(maxsize=1, ttl=3600))(_fetch_portal_counters)
     _fetch_nsdp_xml = cached(cache=TTLCache(maxsize=10, ttl=6 * 3600))(_fetch_nsdp_xml)
-    # _hudud_regions = cached(cache=TTLCache(maxsize=1, ttl=3600))(_hudud_regions)
-    # _hudud_spheres = cached(cache=TTLCache(maxsize=1, ttl=3600))(_hudud_spheres)
-    # _hudud_activity_types = cached(cache=TTLCache(maxsize=1, ttl=3600))(_hudud_activity_types)
 
 
 # ---------------------------------------------------------------------------
 # siat.stat.uz tools
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def siat_query(
     request: str,
     classifier: str = "",
@@ -573,6 +585,10 @@ async def siat_query(
         return _json({"status": "error", "message": "lang must be en, uz, ru, or uzc"})
     if not 1 <= max_rows <= 100 or not 1 <= max_periods <= 120:
         return _json({"status": "error", "message": "max_rows must be 1-100 and max_periods 1-120"})
+    if not 0 <= start_year <= 9999 or not 0 <= end_year <= 9999:
+        return _json({"status": "error", "message": "Years must be 0 (unbounded) or 1-9999"})
+    if period.strip() not in {"latest", "all"} and _period_year(period.strip()) is None:
+        return _json({"status": "error", "message": "Invalid period"})
     if start_year and end_year and start_year > end_year:
         return _json({"status": "error", "message": "start_year must not exceed end_year"})
 
@@ -675,7 +691,10 @@ async def siat_query(
     if requested_period == "latest":
         wants_trend = bool(re.search(r"\b(?:trend|history|historical|time series|over time)\b", request, re.IGNORECASE))
         since_year = re.search(r"\b(?:since|from)\s+((?:19|20)\d{2})\b", request, re.IGNORECASE)
-        dates_in_request = re.findall(r"\b(?:19|20)\d{2}(?:-Q[1-4]|-M(?:0[1-9]|1[0-2]))?\b", request)
+        date_text = "" if request.isdecimal() or _find_code_request(request) else request
+        if id_in_request:
+            date_text = date_text[:id_in_request.start()] + date_text[id_in_request.end():]
+        dates_in_request = re.findall(r"\b(?:19|20)\d{2}(?:-Q[1-4]|-M(?:0[1-9]|1[0-2]))?\b", date_text)
         if len(dates_in_request) == 1 and since_year:
             bounded_periods = [key for key in bounded_periods if int(key[:4]) >= int(since_year.group(1))]
             requested_period = "all"
@@ -1024,12 +1043,19 @@ async def get_datasets(
         plus metadata when include_metadata=true. Use this instead of repeated
         get_dataset calls when you already know several ids or catalog codes.
     """
+    if not 0 <= start_year <= 9999 or not 0 <= end_year <= 9999 or (start_year and end_year and start_year > end_year):
+        return _json({"error": "Invalid year range"})
+    if len(_split_csv(dataset_ids)) + len(_split_csv(dataset_codes)) > 20:
+        return _json({"error": "Request at most 20 datasets per call"})
     ids: list[int] = []
     errors: list[dict[str, str]] = []
 
     for raw_id in _split_csv(dataset_ids):
         try:
-            ids.append(int(raw_id))
+            value = int(raw_id)
+            if value <= 0:
+                raise ValueError("Dataset IDs must be positive")
+            ids.append(value)
         except ValueError:
             errors.append({"dataset_id": raw_id, "error": "dataset_ids must be integers"})
 
@@ -1110,7 +1136,7 @@ async def get_dataset_metadata(dataset_id: int, lang: str = "en") -> str:
 # nsdp.stat.uz tools
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def nsdp_list_datasets() -> str:
     """
     List all 22 datasets available on nsdp.stat.uz - Uzbekistan's National
@@ -1139,7 +1165,7 @@ async def nsdp_list_datasets() -> str:
     ])
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def nsdp_get_dataset(indicator_code: str) -> str:
     """
     Fetch and parse an NSDP (nsdp.stat.uz) dataset by its IMF/SDMX indicator
@@ -1196,160 +1222,30 @@ async def nsdp_get_dataset(indicator_code: str) -> str:
     })
 
 
-# ---------------------------------------------------------------------------
-# hudud.stat.uz — Regional Statistics Portal (disabled)
-# ---------------------------------------------------------------------------
-#
-# @mcp.tool()
-# async def hudud_list_regions(parent_soato: str = “”) -> str:
-#     try:
-#         if parent_soato:
-#             data = await _hudud_get(“/api/v1/gis/regions/”, {“parent__isnull”: “false”, “parent_soato”: parent_soato})
-#         else:
-#             data = await _hudud_regions()
-#         return _json(data)
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_list_spheres() -> str:
-#     try:
-#         data = await _hudud_spheres()
-#         return _json([{“id”: s.get(“id”), “title”: s.get(“title”), “title_en”: s.get(“title_en”), “title_ru”: s.get(“title_ru”)} for s in data])
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_sphere_indicators(sphere_id: int) -> str:
-#     try:
-#         data = await _hudud_get(“/api/v1/gis/spheres/sdmx/”, {“menu”: sphere_id})
-#         return _json([{“id”: ind.get(“id”), “title_en”: ind.get(“title_en”), “title_uz”: ind.get(“title_uz”) or ind.get(“title”), “title_ru”: ind.get(“title_ru”), “code”: ind.get(“code”), “sdmx_id”: ind.get(“sdmx_id”), “period_en”: ind.get(“period_en”), “unit_en”: ind.get(“unit_en”)} for ind in data])
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_indicator_periods(indicator_id: int) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/gis/sdmx/{indicator_id}/periods/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_indicator_data(indicator_id: int, soato: str = “”, period: str = “”) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/gis/sdmx/{indicator_id}/”, {“soato”: soato, “period”: period}))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_indicator_metadata(indicator_id: int) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/gis/sdmx-info/{indicator_id}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_region_passport(soato: str = “”) -> str:
-#     try:
-#         params = {“code”: soato} if soato else {}
-#         return _json(await _hudud_get(“/api/v1/passport/MacroEconomicAndDemographicIndicators/”, params))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_population_by_years(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/DemographyPopulationByYears/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_population_by_gender_age(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/PopularityGenderAges/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_population_by_gender_subregion(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/PopularityGenderBySoato/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_urban_rural_population(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/PopulationVillageAndCityBySoato/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_demography_indicators(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/demography/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_import_export(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/import-export/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_salary_by_subregion(soato: str) -> str:
-#     try:
-#         return _json(await _hudud_get(f”/api/v1/passport/SalaryBySoato/{soato}/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_salary_by_activity(activity_codes: str) -> str:
-#     try:
-#         return _json(await _hudud_get(“/api/v1/passport/SalaryByActivityTypes/”, {“codes”: activity_codes}))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_list_activity_types() -> str:
-#     try:
-#         return _json(await _hudud_activity_types())
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_org_count_by_activity() -> str:
-#     try:
-#         return _json(await _hudud_get(“/api/v1/passport/OrgCountByActivityTypes/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_geometries() -> str:
-#     try:
-#         return _json(await _hudud_get(“/api/v1/gis/geometries/”))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_sdmx_by_period_type(period_type: str = “annual”) -> str:
-#     try:
-#         return _json(await _hudud_get(“/api/v1/passport/FilterSDMXListByPeriodType/”, {“period_type”: period_type}))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
-#
-# @mcp.tool()
-# async def hudud_get_timeline_by_period(period_type: str = “annual”, period: str = “”) -> str:
-#     try:
-#         params: dict[str, str] = {“period_type”: period_type}
-#         if period:
-#             params[“period”] = period
-#         return _json(await _hudud_get(“/api/v1/passport/TimelineByPeriodAndPeriodType/”, params))
-#     except Exception as e:
-#         return _json({“error”: str(e)})
+def main(argv=None):
+    """Run locally over stdio or serve a remote Claude/ChatGPT connector."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--public-host", action="append", default=[],
+                        help="Allowed public Host header, e.g. stats.example.com (repeatable)")
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    for host in args.public_host:
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?", host):
+            parser.error("--public-host must be a hostname with optional port, without scheme, path, or wildcards")
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *args.public_host],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*",
+                         *[f"https://{host}" for host in args.public_host]],
+    )
+    mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":
-    mcp.run()
+    main()

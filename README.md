@@ -21,6 +21,7 @@ MCP server for Uzbekistan official statistics — [siat.stat.uz](https://siat.st
 
 ## Features
 
+- **Claude and ChatGPT compatibility:** Local stdio and remote Streamable HTTP at `/mcp`, with read-only tool annotations. See [connection and marketplace setup](docs/marketplace.md) for hosting, connection steps, and public directory submission requirements.
 - **High-Performance Caching:** Implements `asyncache` and `cachetools` to cache the catalog, dataset files, and API responses for one hour, avoiding redundant multi-megabyte fetches while allowing updates to appear.
 - **Fast JSON Handling:** Uses `pysimdjson` for SIMD-accelerated inbound JSON parsing when available, with `orjson` kept for fast output serialization and as a parser fallback.
 - **Connection Pooling:** Maintains an active HTTP keep-alive connection pool via a shared `httpx` async client to bypass repeated TLS handshake latency.
@@ -176,58 +177,244 @@ If the indicator description is ambiguous, use an ID from the returned `matches`
 
 ---
 
-## Installation
+## Install from a marketplace or desktop package
 
-**Using `uv` (recommended):**
+No separately hosted MCP server is needed. The tools run on the user's computer
+and fetch public statistics directly.
 
-```bash
-git clone https://github.com/alishersuyunov/siat-mcp.git
-cd siat-mcp
-uv pip install -e .
+**Release status:** These installation files are prepared locally. Repository
+marketplace commands will work for other users after the changes are pushed to
+GitHub. Desktop downloads must first be attached to a GitHub release. There is
+no approved public directory listing yet.
+
+| Where you use it | Installation route | Runtime requirement |
+|------------------|--------------------|---------------------|
+| Claude Code | Add this GitHub marketplace, then install `siat-mcp` | `uv` installed once; it manages Python and dependencies |
+| Codex / supported local ChatGPT Work | Add the repository marketplace, then install `siat-mcp` | `uv` installed once; run the chat locally |
+| Claude Desktop | Open the `.mcpb` file for your operating system and click Install | Native package includes Python and dependencies |
+| ChatGPT Desktop public directory | Install an approved desktop plugin | Publication needs OpenAI partner approval and review |
+
+### Claude Code
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) once if it is
+not already available, then restart Claude Code so it can find it. In Claude Code:
+
+```text
+/plugin marketplace add alishersuyunov/siat-mcp
+/plugin install siat-mcp@siat-statistics
 ```
 
-**Using `pip`:**
+Where your client has **Add marketplace**, use
+`https://github.com/alishersuyunov/siat-mcp`, then select **siat-mcp → Install**.
+The first tool start needs internet access to download its runtime/dependencies.
+You do not need to edit Claude's JSON configuration.
 
-```bash
-git clone https://github.com/alishersuyunov/siat-mcp.git
-cd siat-mcp
-pip install -e .
+### Codex
+
+With `uv` available, register and install from a terminal:
+
+```text
+codex plugin marketplace add alishersuyunov/siat-mcp
+codex plugin add siat-mcp@siat-statistics
 ```
 
-Python 3.11 or newer is required.
+Or use your client's marketplace picker when available. Start a new local chat
+after installation. A cloud chat cannot launch this local process.
 
----
+### Claude Desktop: no Python installation
 
-## Configuration
+Obtain the `.mcpb` release asset matching your operating system and processor.
+Open it with Claude Desktop and confirm **Install**. Ask it to list NSDP datasets.
+The Windows AMD64 package is built locally; other operating systems need native
+builds before corresponding download links can be published. A `.mcpb` file is
+for Claude Desktop, not ChatGPT.
 
-### Claude Desktop
+### ChatGPT Desktop
 
-Add the following to your `claude_desktop_config.json`:
+The native `desktop-plugin.zip` is the separate OpenAI package. It includes the
+same local executable and can be used in supported local plugin workflows.
+It is **not** a universally installable web app or an approved public listing.
+OpenAI currently restricts public local-MCP submissions to approved partners.
+See [local packaging and release instructions](docs/local-distribution.md).
+
+Prefer manual setup or want to develop the server? Continue below.
+
+## Installation: start here
+
+**New to MCP?** It is the connection that lets an AI assistant use this project's statistics tools. You do not need to write any code. You will download the project, install its dependencies, and tell your assistant where to find it.
+
+The guide below sets up **Claude Desktop on your own computer**. You do not need an API key or a hosting account for this setup. Keep the downloaded project folder: Claude will use it whenever it starts the tools.
+
+> **Using ChatGPT or Claude in a web browser?** Those need a publicly accessible HTTPS server. Installing the project on your laptop alone does not connect it to the web app. See the separate [remote connection guide](docs/marketplace.md). This project does not currently provide a shared hosted endpoint.
+
+### 1. Install Python and Claude Desktop
+
+- Install **Python 3.11 or newer** from [python.org](https://www.python.org/downloads/). On Windows, enable **Add python.exe to PATH** if the installer offers it.
+- Install **Claude Desktop** from [Claude's download page](https://claude.ai/download).
+
+On Windows, open **PowerShell** from the Start menu and run:
+
+```powershell
+py --version
+```
+
+On macOS, open **Terminal** and run:
+
+```bash
+python3 --version
+```
+
+You should see `Python 3.11` or a newer version. If the command is not found, close and reopen the terminal after installing Python.
+
+### 2. Download this project
+
+1. Open the [siat-mcp GitHub page](https://github.com/alishersuyunov/siat-mcp).
+2. Click the green **Code** button, then **Download ZIP**.
+3. Extract the ZIP into a folder you plan to keep, such as your Documents folder. On Windows, right-click the ZIP and choose **Extract All**.
+4. Open the extracted folder containing **`server.py`** and **`pyproject.toml`**. The folder will usually be called `siat-mcp-main`.
+
+You do not need Git for this method.
+
+### 3. Install the project's dependencies
+
+Open a terminal in that extracted folder. On Windows, open the folder in File Explorer, click the address bar, type `powershell`, and press Enter. On macOS, type `cd ` in Terminal, drag the extracted folder into the window, then press Enter.
+
+Copy and run the following commands **one line at a time**. Do not copy the surrounding code-box markers.
+
+**Windows — PowerShell:**
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\python.exe server.py --help
+```
+
+**macOS — Terminal:**
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install .
+./.venv/bin/python server.py --help
+```
+
+The first command creates a `.venv` folder for this project's Python dependencies. The second installs them and needs an internet connection. The final command should show help text containing `--transport`, `--host`, and `--port`.
+
+**If you see that help text, installation worked.** You do not need to activate the environment or leave the terminal running.
+
+### 4. Connect it to Claude Desktop
+
+Claude needs two full paths: the Python program inside `.venv`, and this project's `server.py` file.
+
+Print the exact paths for your computer:
+
+**Windows — in the same PowerShell window:**
+
+```powershell
+(Resolve-Path .\.venv\Scripts\python.exe).Path
+(Resolve-Path .\server.py).Path
+```
+
+**macOS — in the same Terminal window:**
+
+```bash
+printf '%s\n' "$PWD/.venv/bin/python" "$PWD/server.py"
+```
+
+Next, open Claude's configuration file in a plain-text editor such as Notepad on Windows or TextEdit in plain-text mode on macOS:
+
+| System | Configuration file |
+|--------|--------------------|
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+
+On Windows, press **Win + R**, paste `%APPDATA%\Claude`, and press Enter to open the folder. On macOS, use Finder's **Go → Go to Folder** and enter `~/Library/Application Support/Claude`.
+
+If the file does not exist, create it with the exact name `claude_desktop_config.json`. On Windows, make sure it is not accidentally saved as `claude_desktop_config.json.txt`.
+
+For a new or empty configuration file, paste this example and **replace both example paths with your own**:
+
+**Windows example:**
 
 ```json
 {
   "mcpServers": {
     "siat-stat-uz": {
-      "command": "path_to_python\\python.exe",
-      "args": [
-        "path_to_the_folder\\server.py"
-      ]
+      "command": "C:/Users/YourName/Documents/siat-mcp-main/.venv/Scripts/python.exe",
+      "args": ["C:/Users/YourName/Documents/siat-mcp-main/server.py"]
     }
   }
 }
 ```
 
-File locations:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+Use forward slashes (`/`) in the Windows JSON paths, as shown above. If you paste paths from PowerShell, change each backslash (`\`) to `/`. Keep the quotation marks, even if your path contains spaces.
 
-### Claude Code (CLI)
+**macOS example:**
 
-```bash
-claude mcp add siat-stat-uz -- siat-mcp
+```json
+{
+  "mcpServers": {
+    "siat-stat-uz": {
+      "command": "/Users/YourName/Documents/siat-mcp-main/.venv/bin/python",
+      "args": ["/Users/YourName/Documents/siat-mcp-main/server.py"]
+    }
+  }
+}
 ```
 
-To expose the detailed SIAT tools for an existing client, set `SIAT_MCP_LEGACY_TOOLS=1` in that MCP server's environment and restart the server. The default tool list stays small so an assistant can select `siat_query` without first navigating several catalog tools.
+> **Already have other MCP tools configured?** Keep them. Add only the `siat-stat-uz` entry inside your existing `mcpServers` object, with a comma between entries. Do not replace your entire configuration or add a second `mcpServers` key.
+
+Save the file, then **fully quit and reopen Claude Desktop**. On Windows, quit it from the system tray if it remains running there; on macOS, use **Cmd + Q**. Claude starts the server automatically.
+
+### 5. Try your first request
+
+Start a new Claude conversation and ask:
+
+> Use siat-stat-uz to list the available NSDP datasets.
+
+If Claude asks for permission to use the tool, approve the request. You should receive a list containing codes such as **NAG** (GDP), **CPI** (consumer prices), and **EXR** (exchange rates). This first check uses a built-in list and does not download statistics.
+
+Then try a request that retrieves live data:
+
+> Use siat-stat-uz to fetch the EXR exchange-rate dataset and include its source link.
+
+### Troubleshooting
+
+| What you see | What to try |
+|--------------|-------------|
+| `py` or `python3` is not found | Install Python, reopen your terminal, and check its version again. On Windows, try `python --version`; if that works, use `python` instead of `py` in step 3. |
+| Python is older than 3.11 | Install a supported version before creating `.venv`. On macOS, use the installed version's command, such as `python3.13`, if `python3` still points to the older version. |
+| “Directory is not installable” or `server.py` cannot be found | Open the folder containing both `server.py` and `pyproject.toml`. You may still be in the outer ZIP extraction folder. |
+| The dependency installation fails | Check your internet connection and read the last lines of the error. Keep that error text when asking for help. |
+| Claude cannot start the server | Check both full paths in the configuration. The `command` must point to Python **inside `.venv`**, and the project folder must still exist. |
+| Claude reports an invalid configuration | Check commas, double quotation marks, and braces. On Windows, use `/` in paths and check that the file does not end in `.txt`. |
+| The tools do not appear | Save the configuration and fully quit and reopen Claude. Managed work accounts may restrict local MCP tools. |
+| The dataset list works, but live data fails | The upstream statistics website may be unavailable. Try again later and include the returned error when reporting the problem. |
+| Running `server.py` appears to do nothing | Without `--help`, the server waits for an MCP client. That is expected. Press **Ctrl + C** to stop it; Claude normally launches it for you. |
+
+Need help? [Open a GitHub issue](https://github.com/alishersuyunov/siat-mcp/issues) with your operating system, the step that failed, and the error message. Remove any private information from configuration files before sharing them.
+
+### Other installation options
+
+**Already use Git and uv?**
+
+```bash
+git clone https://github.com/alishersuyunov/siat-mcp.git
+cd siat-mcp
+uv venv
+uv pip install -e .
+```
+
+Then follow steps 4–5 above, using the paths inside your cloned folder.
+
+**Using Claude Code?** After completing step 3, register the server using your actual full paths:
+
+```bash
+claude mcp add siat-stat-uz -- "/absolute/path/to/.venv/bin/python" "/absolute/path/to/server.py"
+```
+
+On Windows, use the full path to `.venv/Scripts/python.exe` for the first path. Keep quotation marks around paths containing spaces.
+
+**Need the detailed SIAT tools?** The default setup exposes three tools. Advanced users can set `SIAT_MCP_LEGACY_TOOLS=1` in the server's environment to expose the additional tools listed earlier in this README.
 
 ---
 
@@ -253,7 +440,7 @@ Once configured, you can ask your AI assistant things like:
 
 ## Data Sources
 
-This MCP server does not store, modify, or redistribute data — it fetches from live sources on demand.
+This MCP server fetches public data on demand, caches responses in memory, and returns them to the connected client. SIAT cache entries expire after one hour; NSDP XML entries expire after six hours. It does not modify the upstream sources.
 
 | Source | Provider | Format |
 |--------|----------|--------|
@@ -263,3 +450,9 @@ This MCP server does not store, modify, or redistribute data — it fetches from
 | [cbu.uz](https://cbu.uz) | Central Bank of Uzbekistan | SDMX 2.1 XML |
 | [api.mf.uz](https://mf.uz) | Ministry of Economy and Finance of Uzbekistan | SDMX 2.1 XML |
 | [uzse.uz](https://uzse.uz) | Uzbekistan Stock Exchange | SDMX 2.1 XML |
+
+## Development checks
+
+Run `python -m unittest discover -s tests -v` after installing the project.
+The compatibility test starts a temporary local HTTP server; it needs loopback network access.
+Build distribution archives with `uv build`. Bulk retrieval accepts at most 20 dataset IDs/codes per call.
